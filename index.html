@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>영어 단어 퀴즈</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px 16px;
+      font-family: system-ui, sans-serif;
+      background: #eef4f8;
+      color: #182936;
+    }
+
+    main {
+      max-width: 580px;
+      margin: auto;
+      padding: 28px;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 12px 40px #18293612;
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 26px;
+    }
+
+    h2 {
+      font-size: 36px;
+      margin: 24px 0;
+    }
+
+    p {
+      line-height: 1.6;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid #aebdca;
+      background: white;
+      color: #182936;
+    }
+
+    button:focus-visible {
+      outline: 3px solid #2d67da;
+      outline-offset: 3px;
+    }
+
+    button:disabled {
+      cursor: default;
+      opacity: 1;
+    }
+
+    #options {
+      display: grid;
+      gap: 10px;
+    }
+
+    #options button {
+      text-align: left;
+    }
+
+    #options button.correct {
+      background: #e4f6eb;
+      border-color: #208146;
+    }
+
+    #options button.wrong {
+      background: #fff0ef;
+      border-color: #c53932;
+    }
+
+    .primary {
+      background: #245ac9;
+      color: white;
+      border: none;
+      margin-top: 18px;
+    }
+
+    #feedback {
+      font-weight: 700;
+      min-height: 26px;
+    }
+
+    #notice,
+    #saveLog {
+      font-size: 14px;
+      color: #526271;
+    }
+
+    #saveLog {
+      padding-left: 22px;
+      line-height: 1.9;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>영어 단어 퀴즈</h1>
+
+    <p>
+      단어의 뜻을 골라 보세요.
+      총 3문제이며 문제마다 한 번만 선택할 수 있습니다.
+    </p>
+
+    <p id="notice" role="status"></p>
+
+    <button id="start" class="primary" type="button">
+      퀴즈 시작
+    </button>
+
+    <section id="quiz" aria-label="퀴즈" hidden>
+      <p id="progress"></p>
+
+      <h2 id="word" tabindex="-1"></h2>
+
+      <div id="options"></div>
+
+      <p id="feedback" role="status"></p>
+
+      <button id="next" class="primary" type="button" hidden>
+        다음 문제
+      </button>
+    </section>
+
+    <section id="result" aria-label="퀴즈 결과" hidden>
+      <h2 id="score" tabindex="-1"></h2>
+
+      <p>
+        수고했어요! 아래에서 문제별 저장 상태를 확인하세요.
+      </p>
+
+      <button id="restart" class="primary" type="button">
+        다시 풀기
+      </button>
+    </section>
+
+    <section id="saving" aria-label="응답 저장 상태" hidden>
+      <h3>이번 응시 저장 상태</h3>
+
+      <ul id="saveLog" aria-live="polite"></ul>
+    </section>
+  </main>
+
+  <!-- Supabase JavaScript v2 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script>
+    "use strict";
+
+    // 아래 두 값만 본인의 Supabase 프로젝트 값으로 바꾸세요.
+    const SUPABASE_URL = "YOUR_SUPABASE_URL";
+    const SUPABASE_PUBLISHABLE_KEY = "YOUR_PUBLISHABLE_KEY";
+
+    const questions = [
+      {
+        word: "abundant",
+        options: ["조용한", "풍부한", "위험한", "느린"],
+        answer: "풍부한"
+      },
+      {
+        word: "reluctant",
+        options: ["주저하는", "열정적인", "정확한", "부지런한"],
+        answer: "주저하는"
+      },
+      {
+        word: "brief",
+        options: ["강력한", "평범한", "짧은", "불규칙한"],
+        answer: "짧은"
+      }
+    ];
+
+    const el = (id) => document.getElementById(id);
+
+    let db = null;
+    let attemptId = "";
+    let questionIndex = 0;
+    let score = 0;
+    let answered = false;
+    let ready = false;
+    let startedAt = 0;
+
+    // Supabase 연결
+    try {
+      if (
+        SUPABASE_URL === "YOUR_SUPABASE_URL" ||
+        SUPABASE_PUBLISHABLE_KEY === "YOUR_PUBLISHABLE_KEY"
+      ) {
+        throw new Error(
+          "Supabase 설정값을 입력하면 응답을 저장할 수 있습니다."
+        );
+      }
+
+      if (!window.supabase) {
+        throw new Error(
+          "Supabase CDN을 불러오지 못했습니다."
+        );
+      }
+
+      db = window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_PUBLISHABLE_KEY,
+        {
+          auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false
+          }
+        }
+      );
+
+      el("notice").textContent =
+        "답을 선택하면 저장을 시도합니다.";
+    } catch (error) {
+      el("notice").textContent =
+        error.message +
+        " 퀴즈는 저장 없이 진행할 수 있습니다.";
+    }
+
+    // 새 응시 시작
+    function startQuiz() {
+      try {
+        attemptId = crypto.randomUUID();
+      } catch {
+        el("notice").textContent =
+          "응시 번호를 만들 수 없습니다. HTTPS 주소에서 실행해 주세요.";
+        return;
+      }
+
+      questionIndex = 0;
+      score = 0;
+
+      el("saveLog").replaceChildren();
+
+      el("start").hidden = true;
+      el("result").hidden = true;
+      el("saving").hidden = false;
+      el("quiz").hidden = false;
+
+      showQuestion();
+    }
+
+    // 문제 표시
+    function showQuestion() {
+      const question = questions[questionIndex];
+
+      answered = false;
+      ready = false;
+
+      el("progress").textContent =
+        (questionIndex + 1) + " / 3";
+
+      el("word").textContent = question.word;
+      el("feedback").textContent = "";
+      el("next").hidden = true;
+
+      el("next").textContent =
+        questionIndex === 2
+          ? "결과 보기"
+          : "다음 문제";
+
+      el("options").replaceChildren();
+
+      question.options.forEach((option, index) => {
+        const button = document.createElement("button");
+
+        button.type = "button";
+        button.textContent = (index + 1) + ". " + option;
+        button.disabled = true;
+
+        button.addEventListener("click", () => {
+          chooseAnswer(option);
+        });
+
+        el("options").append(button);
+      });
+
+      el("word").focus();
+
+      requestAnimationFrame(() => {
+        // 문제 표시 후 선택 가능한 순간부터 시간 측정
+        startedAt = performance.now();
+        ready = true;
+
+        for (const button of el("options").children) {
+          button.disabled = false;
+        }
+      });
+    }
+
+    // 첫 답 선택 처리
+    function chooseAnswer(chosenAnswer) {
+      if (!ready || answered) {
+        return;
+      }
+
+      // 저장을 시작하기 전에 잠가 중복 클릭 방지
+      answered = true;
+
+      const responseTimeMs = Math.max(
+        0,
+        Math.round(performance.now() - startedAt)
+      );
+
+      const question = questions[questionIndex];
+      const correct = chosenAnswer === question.answer;
+
+      if (correct) {
+        score += 1;
+      }
+
+      [...el("options").children].forEach((button, index) => {
+        button.disabled = true;
+
+        const option = question.options[index];
+
+        if (option === question.answer) {
+          button.classList.add("correct");
+        } else if (option === chosenAnswer) {
+          button.classList.add("wrong");
+        }
+      });
+
+      el("feedback").textContent = correct
+        ? "정답입니다!"
+        : "오답입니다. 정답: " + question.answer;
+
+      el("next").hidden = false;
+      el("next").focus();
+
+      const statusItem = document.createElement("li");
+
+      statusItem.textContent =
+        (questionIndex + 1) + "번: 저장 중…";
+
+      el("saveLog").append(statusItem);
+
+      // 선택 순간의 값을 복사하여 저장
+      const payload = {
+        attempt_id: attemptId,
+        question_no: questionIndex + 1,
+        english_word: question.word,
+        chosen_answer: chosenAnswer,
+        is_correct: correct,
+        response_time_ms: responseTimeMs
+      };
+
+      // 저장 완료를 기다리지 않고 퀴즈 진행 가능
+      void saveAnswer(payload, statusItem);
+    }
+
+    // 응답 저장: INSERT만 한 번 실행
+    async function saveAnswer(payload, statusItem) {
+      const prefix = payload.question_no + "번: ";
+
+      try {
+        if (!db) {
+          throw new Error(
+            "Supabase 연결 설정을 확인해 주세요."
+          );
+        }
+
+        const { error } = await db
+          .from("quiz_answers")
+          .insert(payload);
+
+        if (error) {
+          throw error;
+        }
+
+        statusItem.textContent =
+          prefix + "저장 성공";
+      } catch (error) {
+        statusItem.textContent =
+          prefix +
+          "저장 실패 또는 확인 불가 — " +
+          (error.message || "연결을 확인해 주세요.") +
+          " (퀴즈는 계속 진행할 수 있습니다.)";
+      }
+    }
+
+    // 시작 버튼
+    el("start").addEventListener("click", startQuiz);
+
+    // 다시 풀기: 새로운 attempt_id 생성
+    el("restart").addEventListener("click", startQuiz);
+
+    // 다음 문제 또는 결과 화면
+    el("next").addEventListener("click", () => {
+      if (!answered) {
+        return;
+      }
+
+      if (questionIndex < questions.length - 1) {
+        questionIndex += 1;
+        showQuestion();
+      } else {
+        ready = false;
+
+        el("quiz").hidden = true;
+        el("result").hidden = false;
+
+        el("score").textContent =
+          "총점: " + score + " / 3점";
+
+        el("score").focus();
+      }
+    });
+  </script>
+</body>
+</html>
